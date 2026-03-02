@@ -1,0 +1,17 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+.idea/
+*.DotSettings.user
+
+## NuGet
+*.nupkg
+*.snupkg
+
+## Build
+[Dd]ebug/
+[Rr]elease/
