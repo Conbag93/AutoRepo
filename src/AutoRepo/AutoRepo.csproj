@@ -11,7 +11,13 @@
     <!-- NuGet package metadata -->
     <PackageId>AutoRepo</PackageId>
     <Version>0.1.0</Version>
+    <Authors>Conbag93</Authors>
     <Description>Source generator that creates Refit interfaces, HttpClient implementations, fallback and combined repository wrappers from annotated repository interfaces.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Conbag93/AutoRepo</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Conbag93/AutoRepo</RepositoryUrl>
+    <PackageTags>source-generator;repository;refit;httpclient;code-generation</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <DevelopmentDependency>true</DevelopmentDependency>
   </PropertyGroup>
@@ -24,5 +30,6 @@
   <!-- Pack the analyzer DLL correctly -->
   <ItemGroup>
     <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
