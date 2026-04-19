@@ -28,6 +28,23 @@ public sealed class MethodModel
     public bool HasSource { get; set; }
     public List<ParameterModel> Parameters { get; set; } = new();
     public HttpMethod HttpMethod { get; set; } = HttpMethod.Get;
+    public OperationOverride OperationOverride { get; set; } = OperationOverride.None;
+    public ReadOperationMode ReadMode { get; set; } = ReadOperationMode.Default;
+}
+
+public enum OperationOverride
+{
+    None,
+    Read,
+    Mutation
+}
+
+public enum ReadOperationMode
+{
+    Default,
+    ApiOnly,
+    Fallback,
+    Combined
 }
 
 public sealed class ParameterModel

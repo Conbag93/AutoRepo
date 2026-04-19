@@ -109,6 +109,12 @@ public static class CombinedEmitter
             case CombinedStrategy.MergeSingleItem:
                 EmitMergeSingleItemBody(sb, repo, method);
                 break;
+            case CombinedStrategy.ApiOnly:
+                EmitApiOnlyBody(sb, method);
+                break;
+            case CombinedStrategy.LocalFirst:
+                EmitLocalFirstBody(sb, method);
+                break;
             case CombinedStrategy.LocalOnly:
                 EmitLocalOnlyBody(sb, method);
                 break;
@@ -145,6 +151,24 @@ public static class CombinedEmitter
 
     private static CombinedStrategy DetermineStrategy(MethodModel method)
     {
+        // Explicit attribute overrides take precedence over name heuristics
+        if (method.OperationOverride == Models.OperationOverride.Mutation)
+            return CombinedStrategy.LocalOnly;
+
+        if (method.OperationOverride == Models.OperationOverride.Read)
+        {
+            return method.ReadMode switch
+            {
+                Models.ReadOperationMode.ApiOnly  => CombinedStrategy.ApiOnly,
+                Models.ReadOperationMode.Fallback => CombinedStrategy.LocalFirst,
+                Models.ReadOperationMode.Combined => method.ReturnsCollection
+                    ? CombinedStrategy.MergeCollections
+                    : CombinedStrategy.MergeSingleItem,
+                _ => CombinedStrategy.ApiOnly
+            };
+        }
+
+        // Write verbs are always mutations
         if (method.Name.StartsWith("Upsert") ||
             method.Name.StartsWith("Create") ||
             method.Name.StartsWith("Update") ||
@@ -155,22 +179,28 @@ public static class CombinedEmitter
             return CombinedStrategy.LocalOnly;
         }
 
+        // GetStored*/GetLibrary* are explicitly local-only reads
         if (method.Name.StartsWith("GetStored") || method.Name.StartsWith("GetLibrary"))
-        {
             return CombinedStrategy.LocalOnly;
+
+        // Get*/Find*/Search* are reads — route based on whether source tracking is available
+        if (method.Name.StartsWith("Get") || method.Name.StartsWith("Find") || method.Name.StartsWith("Search"))
+        {
+            if (!method.HasSource)
+                return CombinedStrategy.ApiOnly;
+
+            return method.ReturnsCollection
+                ? CombinedStrategy.MergeCollections
+                : CombinedStrategy.MergeSingleItem;
         }
 
+        // Unclassified methods without source tracking can't be merged
         if (!method.HasSource && method.InnerReturnType != "void")
-        {
             return CombinedStrategy.LocalOnly;
-        }
 
-        if (method.ReturnsCollection)
-        {
-            return CombinedStrategy.MergeCollections;
-        }
-
-        return CombinedStrategy.MergeSingleItem;
+        return method.ReturnsCollection
+            ? CombinedStrategy.MergeCollections
+            : CombinedStrategy.MergeSingleItem;
     }
 
     private static void EmitMergeCollectionsBody(StringBuilder sb, RepositoryModel repo, MethodModel method)
@@ -261,6 +291,56 @@ public static class CombinedEmitter
         sb.AppendLine($"        return null;");
     }
 
+    private static void EmitApiOnlyBody(StringBuilder sb, MethodModel method)
+    {
+        var callArgs = BuildCallArgs(method);
+        var returnsVoid = method.InnerReturnType == "void" ||
+                          method.ReturnType == "System.Threading.Tasks.Task" ||
+                          method.ReturnType == "Task";
+
+        sb.AppendLine($"        // Read from API only — return type is a projection or has no source tracking");
+        if (returnsVoid)
+            sb.AppendLine($"        await _api.{method.Name}({callArgs});");
+        else
+            sb.AppendLine($"        return await _api.{method.Name}({callArgs});");
+    }
+
+    private static void EmitLocalFirstBody(StringBuilder sb, MethodModel method)
+    {
+        var callArgs = BuildCallArgs(method);
+        var idParam = method.Parameters.FirstOrDefault(p => p.IsRouteParameter);
+        var idLogValue = idParam != null ? idParam.Name : "\"(no id)\"";
+
+        sb.AppendLine($"        // Try local database first, fall back to API");
+        sb.AppendLine($"        var result = await _local.{method.Name}({callArgs});");
+        sb.AppendLine($"        if (result is not null)");
+        sb.AppendLine("        {");
+        if (method.HasSource)
+            sb.AppendLine($"            result.Source = DataSource.Local;");
+        sb.AppendLine($"            _logger.LogDebug(\"Found {{Id}} in local database\", {idLogValue});");
+        sb.AppendLine($"            return result;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            _logger.LogDebug(\"{{Id}} not found locally, trying API\", {idLogValue});");
+        sb.AppendLine($"            var apiResult = await _api.{method.Name}({callArgs});");
+        if (method.HasSource)
+        {
+            sb.AppendLine($"            if (apiResult is not null)");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                apiResult.Source = DataSource.Remote;");
+            sb.AppendLine("            }");
+        }
+        sb.AppendLine($"            return apiResult;");
+        sb.AppendLine("        }");
+        sb.AppendLine("        catch (Exception ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            _logger.LogWarning(ex, \"Failed to fetch {{Id}} from API\", {idLogValue});");
+        sb.AppendLine("            return null;");
+        sb.AppendLine("        }");
+    }
+
     private static void EmitLocalOnlyBody(StringBuilder sb, MethodModel method)
     {
         var callArgs = BuildCallArgs(method);
@@ -301,6 +381,8 @@ public static class CombinedEmitter
     {
         MergeCollections,
         MergeSingleItem,
+        ApiOnly,
+        LocalFirst,
         LocalOnly
     }
 }

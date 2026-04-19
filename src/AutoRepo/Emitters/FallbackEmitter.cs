@@ -77,6 +77,9 @@ public static class FallbackEmitter
             case FallbackStrategy.ApiFirst:
                 EmitApiFirstBody(sb, repo, method);
                 break;
+            case FallbackStrategy.ApiOnly:
+                EmitApiOnlyBody(sb, method);
+                break;
             case FallbackStrategy.LocalOnly:
                 EmitLocalOnlyBody(sb, method);
                 break;
@@ -113,6 +116,24 @@ public static class FallbackEmitter
 
     private static FallbackStrategy DetermineStrategy(MethodModel method)
     {
+        // Explicit attribute overrides take precedence over name heuristics
+        if (method.OperationOverride == Models.OperationOverride.Mutation)
+            return FallbackStrategy.LocalOnly;
+
+        if (method.OperationOverride == Models.OperationOverride.Read)
+        {
+            return method.ReadMode switch
+            {
+                Models.ReadOperationMode.ApiOnly  => FallbackStrategy.ApiOnly,
+                Models.ReadOperationMode.Fallback => FallbackStrategy.LocalFirst,
+                Models.ReadOperationMode.Combined => method.ReturnsCollection
+                    ? FallbackStrategy.ApiFirst
+                    : FallbackStrategy.LocalFirst,
+                _ => method.ReturnsCollection ? FallbackStrategy.ApiFirst : FallbackStrategy.LocalFirst
+            };
+        }
+
+        // Write verbs are always mutations
         if (method.Name.StartsWith("Upsert") ||
             method.Name.StartsWith("Create") ||
             method.Name.StartsWith("Update") ||
@@ -123,24 +144,28 @@ public static class FallbackEmitter
             return FallbackStrategy.LocalOnly;
         }
 
-        if (!method.HasSource && method.InnerReturnType != "void")
-        {
+        // GetStored*/GetLibrary* are explicitly local-only reads (same as Combined)
+        if (method.Name.StartsWith("GetStored") || method.Name.StartsWith("GetLibrary"))
             return FallbackStrategy.LocalOnly;
-        }
 
-        if (method.ReturnsCollection)
+        // Get*/Find*/Search* are reads regardless of return type
+        if (method.Name.StartsWith("Get") || method.Name.StartsWith("Find") || method.Name.StartsWith("Search"))
         {
-            return FallbackStrategy.ApiFirst;
+            return method.ReturnsCollection ? FallbackStrategy.ApiFirst : FallbackStrategy.LocalFirst;
         }
 
-        return FallbackStrategy.LocalFirst;
+        // Unclassified methods without source tracking can't meaningfully fall back
+        if (!method.HasSource && method.InnerReturnType != "void")
+            return FallbackStrategy.LocalOnly;
+
+        return method.ReturnsCollection ? FallbackStrategy.ApiFirst : FallbackStrategy.LocalFirst;
     }
 
     private static void EmitLocalFirstBody(StringBuilder sb, RepositoryModel repo, MethodModel method)
     {
         var callArgs = BuildCallArgs(method);
         var idParam = method.Parameters.FirstOrDefault(p => p.IsRouteParameter);
-        var idLogValue = idParam != null ? idParam.Name : "request";
+        var idLogValue = idParam != null ? idParam.Name : "\"(no id)\"";
 
         sb.AppendLine($"        // Try local database first");
         sb.AppendLine($"        var result = await _local.{method.Name}({callArgs});");
@@ -205,6 +230,20 @@ public static class FallbackEmitter
         sb.AppendLine("        }");
     }
 
+    private static void EmitApiOnlyBody(StringBuilder sb, MethodModel method)
+    {
+        var callArgs = BuildCallArgs(method);
+        var returnsVoid = method.InnerReturnType == "void" ||
+                          method.ReturnType == "System.Threading.Tasks.Task" ||
+                          method.ReturnType == "Task";
+
+        sb.AppendLine($"        // Read from API only — no local fallback");
+        if (returnsVoid)
+            sb.AppendLine($"        await _api.{method.Name}({callArgs});");
+        else
+            sb.AppendLine($"        return await _api.{method.Name}({callArgs});");
+    }
+
     private static void EmitLocalOnlyBody(StringBuilder sb, MethodModel method)
     {
         var callArgs = BuildCallArgs(method);
@@ -232,6 +271,7 @@ public static class FallbackEmitter
     {
         LocalFirst,
         ApiFirst,
+        ApiOnly,
         LocalOnly
     }
 }
