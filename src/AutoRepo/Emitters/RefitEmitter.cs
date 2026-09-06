@@ -55,24 +55,7 @@ public static class RefitEmitter
     }
 
     private static string BuildRoute(string routePrefix, MethodModel method)
-    {
-        var parts = new List<string> { routePrefix.TrimEnd('/') };
-
-        foreach (var param in method.Parameters.Where(p => p.IsRouteParameter))
-        {
-            parts.Add($"{{{param.Name}}}");
-        }
-
-        if (method.Name.StartsWith("Search"))
-        {
-            if (method.Parameters.Any(p => p.IsRouteParameter))
-                parts.Insert(1, "search");
-            else
-                parts.Add("search");
-        }
-
-        return string.Join("/", parts);
-    }
+        => RouteBuilder.Build(routePrefix, method);
 
     private static string FormatParameters(MethodModel method)
     {

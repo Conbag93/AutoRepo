@@ -30,6 +30,12 @@ public sealed class MethodModel
     public HttpMethod HttpMethod { get; set; } = HttpMethod.Get;
     public OperationOverride OperationOverride { get; set; } = OperationOverride.None;
     public ReadOperationMode ReadMode { get; set; } = ReadOperationMode.Default;
+
+    /// <summary>
+    /// From [ApiRoute("...")]. When set, this exact path (appended after the
+    /// repository's RoutePrefix) is used instead of the id-based route heuristic.
+    /// </summary>
+    public string? ExplicitRoute { get; set; }
 }
 
 public enum OperationOverride
