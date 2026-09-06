@@ -51,6 +51,28 @@ The type must have a static `Default` property returning `JsonSerializerOptions`
 
 - **HTTP method inference**: `Get*`/`Search*`/`Find*` -> GET, `Delete*`/`Remove*` -> DELETE, `Create*`/`Add*` -> POST, `Update*` -> PUT, `Upsert*` -> POST (with body) or PUT
 - **Route parameters**: Parameters named `id` or ending with `Id` in Get/Delete methods
+
+### Overriding the route
+
+The route heuristic above only has an id-shaped parameter to key a path segment on. It breaks down for a family of sibling read methods distinguished by intent rather than by id — e.g. `GetTrendingAsync()`, `GetPopularAsync()`, `GetTopRatedAsync()` all have no route parameter at all, so without an override they'd silently collapse onto the same bare route prefix. Use `[ApiRoute("...")]` on the method to say exactly what the path should be instead of guessing:
+
+```csharp
+[GenerateApi(RoutePrefix = "/api/discover")]
+public interface IDiscoveryRepository
+{
+    [ApiRoute("tvshows/trending")]
+    Task<DiscoveryResult> GetTrendingTVShowsAsync(int? page = null, CancellationToken ct = default);
+
+    [ApiRoute("tvshows/popular")]
+    Task<DiscoveryResult> GetPopularTVShowsAsync(int? page = null, CancellationToken ct = default);
+
+    // "{tmdbId}" binds the parameter into the path, overriding the default id-suffix heuristic too
+    [ApiRoute("tvshows/{tmdbId}/details")]
+    Task<ShowDetails> GetDiscoverTVShowDetailsAsync(int tmdbId, CancellationToken ct = default);
+}
+```
+
+`[ApiRoute]` always wins outright for that method — the name-based heuristic (including the automatic `/search` suffix for `Search*` methods) is skipped entirely once it's present.
 - **Body parameters**: Complex types in POST/PUT methods
 - **Query parameters**: Primitive types that aren't route parameters
 - **Source tracking**: If entities have a `Source` property of type `DataSource`, generated wrappers set it to `Local`, `Remote`, or `Both`

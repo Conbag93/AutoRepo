@@ -86,6 +86,33 @@ public class ReadOperationAttribute : System.Attribute
 public class MutationOperationAttribute : System.Attribute
 {
 }
+
+/// <summary>
+/// Overrides the generator's name-based route inference for a single method.
+/// Required whenever a method has no id-shaped parameter for the generator to key
+/// a route segment on (e.g. sibling read endpoints distinguished by intent, not by id —
+/// GetTrendingAsync/GetPopularAsync/etc. would otherwise all collapse onto the bare route prefix).
+/// The route is appended after the interface's RoutePrefix. Use ""{paramName}"" tokens to bind
+/// a parameter into the path — a parameter referenced this way is treated as a route parameter
+/// regardless of its name, taking precedence over the default id-suffix heuristic.
+/// </summary>
+/// <example>
+/// [ApiRoute(""tvshows/trending"")]
+/// Task&lt;DiscoveryResult&gt; GetTrendingTVShowsAsync(int? page = null, CancellationToken ct = default);
+///
+/// [ApiRoute(""tvshows/{tmdbId}/details"")]
+/// Task&lt;ShowDetails&gt; GetDiscoverTVShowDetailsAsync(int tmdbId, CancellationToken ct = default);
+/// </example>
+[System.AttributeUsage(System.AttributeTargets.Method)]
+public class ApiRouteAttribute : System.Attribute
+{
+    public string Route { get; }
+
+    public ApiRouteAttribute(string route)
+    {
+        Route = route;
+    }
+}
 ");
         });
 
@@ -205,8 +232,10 @@ public class MutationOperationAttribute : System.Attribute
         var isNullable = IsNullableType(innerType);
         var hasSource = HasSourceProperty(method.ReturnType, isCollection);
 
+        var explicitRoute = ParseExplicitRoute(method);
+
         var parameters = method.Parameters
-            .Select(p => ParseParameter(p, method.Name))
+            .Select(p => ParseParameter(p, method.Name, explicitRoute))
             .ToList();
 
         var (operationOverride, readMode) = ParseOperationAttributes(method);
@@ -222,8 +251,20 @@ public class MutationOperationAttribute : System.Attribute
             Parameters = parameters,
             HttpMethod = InferHttpMethod(method.Name, parameters),
             OperationOverride = operationOverride,
-            ReadMode = readMode
+            ReadMode = readMode,
+            ExplicitRoute = explicitRoute
         };
+    }
+
+    private static string? ParseExplicitRoute(IMethodSymbol method)
+    {
+        var routeAttr = method.GetAttributes()
+            .FirstOrDefault(a => a.AttributeClass?.Name == "ApiRouteAttribute");
+
+        if (routeAttr is null || routeAttr.ConstructorArguments.Length == 0)
+            return null;
+
+        return routeAttr.ConstructorArguments[0].Value as string;
     }
 
     private static (Models.OperationOverride, Models.ReadOperationMode) ParseOperationAttributes(IMethodSymbol method)
@@ -251,13 +292,13 @@ public class MutationOperationAttribute : System.Attribute
         return (Models.OperationOverride.None, Models.ReadOperationMode.Default);
     }
 
-    private static ParameterModel ParseParameter(IParameterSymbol param, string methodName)
+    private static ParameterModel ParseParameter(IParameterSymbol param, string methodName, string? explicitRoute)
     {
         var typeName = param.Type.ToDisplayString();
         var isCancellationToken = typeName.Contains("CancellationToken");
         var isPrimitive = IsPrimitiveType(param.Type);
 
-        var isRouteParam = IsRouteParameter(param.Name, methodName);
+        var isRouteParam = IsRouteParameter(param.Name, methodName, explicitRoute);
 
         var isBodyParam = !isPrimitive && !isCancellationToken && !isRouteParam &&
                           (methodName.StartsWith("Upsert") || methodName.StartsWith("Create") ||
@@ -276,8 +317,14 @@ public class MutationOperationAttribute : System.Attribute
         };
     }
 
-    private static bool IsRouteParameter(string paramName, string methodName)
+    private static bool IsRouteParameter(string paramName, string methodName, string? explicitRoute)
     {
+        // An [ApiRoute("...")] override takes precedence: a parameter referenced
+        // as a "{name}" token in the explicit route is a route parameter regardless
+        // of its own name, since the generator isn't guessing anymore.
+        if (explicitRoute != null && explicitRoute.Contains("{" + paramName + "}"))
+            return true;
+
         if (paramName.Equals("id", StringComparison.OrdinalIgnoreCase))
             return true;
 
