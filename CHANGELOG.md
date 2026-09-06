@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [versionize](https://github.com/versionize/versionize) for commit guidelines.
 
+<a name="0.3.1"></a>
+## [0.3.1](https://www.github.com/Conbag93/AutoRepo/releases/tag/v0.3.1) (2026-09-06)
+
+### Bug Fixes
+
+* treat [ApiRoute("")] as an explicit bare-prefix route ([#2](https://www.github.com/Conbag93/AutoRepo/issues/2)) ([91857b3](https://www.github.com/Conbag93/AutoRepo/commit/91857b3b6ddab4650cef0c7f215d837524fa282e))
+
 <a name="0.3.0"></a>
 ## [0.3.0](https://www.github.com/Conbag93/AutoRepo/releases/tag/v0.3.0) (2026-09-06)
 
