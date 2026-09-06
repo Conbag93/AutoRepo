@@ -72,7 +72,7 @@ public interface IDiscoveryRepository
 }
 ```
 
-`[ApiRoute]` always wins outright for that method — the name-based heuristic (including the automatic `/search` suffix for `Search*` methods) is skipped entirely once it's present.
+`[ApiRoute]` always wins outright for that method — the name-based heuristic (including the automatic `/search` suffix for `Search*` methods) is skipped entirely once it's present. `[ApiRoute("")]` means "the bare route prefix, on purpose" — useful when one method in the interface genuinely belongs at the resource root while its siblings each need their own explicit path (e.g. a plain `GetAllAsync()` alongside `GetContinueWatchingAsync()`/`GetRecentAsync()`, all on the same `[GenerateApi]` interface).
 - **Body parameters**: Complex types in POST/PUT methods
 - **Query parameters**: Primitive types that aren't route parameters
 - **Source tracking**: If entities have a `Source` property of type `DataSource`, generated wrappers set it to `Local`, `Remote`, or `Both`
