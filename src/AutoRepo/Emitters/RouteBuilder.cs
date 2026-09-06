@@ -15,9 +15,12 @@ internal static class RouteBuilder
         var prefix = routePrefix.TrimEnd('/');
 
         // [ApiRoute("...")] wins outright — the generator stops guessing entirely.
+        // An empty route means "the bare prefix, on purpose" (e.g. a plain GET /api/things
+        // sibling to other explicitly-routed methods on the same resource).
         if (method.ExplicitRoute != null)
         {
-            return $"{prefix}/{method.ExplicitRoute.TrimStart('/')}";
+            var explicitRoute = method.ExplicitRoute.Trim('/');
+            return explicitRoute.Length == 0 ? prefix : $"{prefix}/{explicitRoute}";
         }
 
         var parts = new List<string> { prefix };
