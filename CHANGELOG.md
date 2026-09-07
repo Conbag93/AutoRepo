@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [versionize](https://github.com/versionize/versionize) for commit guidelines.
 
+<a name="0.4.0"></a>
+## [0.4.0](https://www.github.com/Conbag93/AutoRepo/releases/tag/v0.4.0) (2026-09-07)
+
+### Features
+
+* add MutationTarget to [MutationOperation] so Fallback/Combined can write through to the API ([#3](https://www.github.com/Conbag93/AutoRepo/issues/3)) ([1f355cb](https://www.github.com/Conbag93/AutoRepo/commit/1f355cb41e6be67a7221e3f9f28052468f76554f))
+
 <a name="0.3.1"></a>
 ## [0.3.1](https://www.github.com/Conbag93/AutoRepo/releases/tag/v0.3.1) (2026-09-06)
 
