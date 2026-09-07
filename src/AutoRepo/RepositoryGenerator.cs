@@ -78,13 +78,37 @@ public class ReadOperationAttribute : System.Attribute
 }
 
 /// <summary>
-/// Marks a repository method as a mutation (local-only routing),
-/// overriding the default name-based heuristic. Use when a method name starts
-/// with 'Get' but is intentionally local-only (e.g. GetStoredAsync).
+/// Where the Fallback/Combined wrappers send a mutation.
 /// </summary>
+public enum MutationTarget
+{
+    /// <summary>Apply to the local store only. This is the default for every mutation.</summary>
+    Local = 0,
+    /// <summary>Send to the API only; the local store is not written. API exceptions propagate to the caller.</summary>
+    Api = 1,
+    /// <summary>
+    /// Write through: send to the API first, then mirror the same call to the local store so subsequent
+    /// Combined/Fallback reads see it immediately. If the API call throws, the failure is logged as a warning
+    /// and the local write still happens — the caller never sees the exception. Use for per-user data the
+    /// server owns (watch history, preferences) where the local copy is a cache, not the system of record.
+    /// </summary>
+    Both = 2
+}
+
+/// <summary>
+/// Marks a repository method as a mutation, overriding the default name-based heuristic, and/or sets
+/// where the mutation is sent. Without a Target this is the historical local-only behaviour — use it
+/// when a method name starts with 'Get' but is intentionally local-only (e.g. GetStoredAsync). With
+/// Target = MutationTarget.Both the generated Fallback/Combined wrappers write through to the API.
+/// </summary>
+/// <example>
+/// [MutationOperation(Target = MutationTarget.Both)]
+/// Task UpsertEpisodeProgressAsync(string contentId, TimeSpan position, CancellationToken ct = default);
+/// </example>
 [System.AttributeUsage(System.AttributeTargets.Method)]
 public class MutationOperationAttribute : System.Attribute
 {
+    public MutationTarget Target { get; set; } = MutationTarget.Local;
 }
 
 /// <summary>
@@ -238,7 +262,7 @@ public class ApiRouteAttribute : System.Attribute
             .Select(p => ParseParameter(p, method.Name, explicitRoute))
             .ToList();
 
-        var (operationOverride, readMode) = ParseOperationAttributes(method);
+        var (operationOverride, readMode, mutationTarget) = ParseOperationAttributes(method);
 
         return new MethodModel
         {
@@ -252,6 +276,7 @@ public class ApiRouteAttribute : System.Attribute
             HttpMethod = InferHttpMethod(method.Name, parameters),
             OperationOverride = operationOverride,
             ReadMode = readMode,
+            MutationTarget = mutationTarget,
             ExplicitRoute = explicitRoute
         };
     }
@@ -267,13 +292,23 @@ public class ApiRouteAttribute : System.Attribute
         return routeAttr.ConstructorArguments[0].Value as string;
     }
 
-    private static (Models.OperationOverride, Models.ReadOperationMode) ParseOperationAttributes(IMethodSymbol method)
+    private static (Models.OperationOverride, Models.ReadOperationMode, Models.MutationTargetMode) ParseOperationAttributes(IMethodSymbol method)
     {
         var attrs = method.GetAttributes();
 
         var mutationAttr = attrs.FirstOrDefault(a => a.AttributeClass?.Name == "MutationOperationAttribute");
         if (mutationAttr != null)
-            return (Models.OperationOverride.Mutation, Models.ReadOperationMode.Default);
+        {
+            var targetArg = mutationAttr.NamedArguments.FirstOrDefault(a => a.Key == "Target");
+            var targetValue = targetArg.Value.Value is int t ? t : 0;
+            var target = targetValue switch
+            {
+                1 => Models.MutationTargetMode.Api,
+                2 => Models.MutationTargetMode.Both,
+                _ => Models.MutationTargetMode.Local
+            };
+            return (Models.OperationOverride.Mutation, Models.ReadOperationMode.Default, target);
+        }
 
         var readAttr = attrs.FirstOrDefault(a => a.AttributeClass?.Name == "ReadOperationAttribute");
         if (readAttr != null)
@@ -286,10 +321,10 @@ public class ApiRouteAttribute : System.Attribute
                 2 => Models.ReadOperationMode.Combined,
                 _ => Models.ReadOperationMode.ApiOnly
             };
-            return (Models.OperationOverride.Read, readMode);
+            return (Models.OperationOverride.Read, readMode, Models.MutationTargetMode.Local);
         }
 
-        return (Models.OperationOverride.None, Models.ReadOperationMode.Default);
+        return (Models.OperationOverride.None, Models.ReadOperationMode.Default, Models.MutationTargetMode.Local);
     }
 
     private static ParameterModel ParseParameter(IParameterSymbol param, string methodName, string? explicitRoute)

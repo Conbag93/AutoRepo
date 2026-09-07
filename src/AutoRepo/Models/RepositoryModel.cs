@@ -32,6 +32,12 @@ public sealed class MethodModel
     public ReadOperationMode ReadMode { get; set; } = ReadOperationMode.Default;
 
     /// <summary>
+    /// Where a mutation is sent by the Fallback/Combined wrappers. Defaults to Local, which is the
+    /// historical behaviour. Set via [MutationOperation(Target = MutationTarget.Both)].
+    /// </summary>
+    public MutationTargetMode MutationTarget { get; set; } = MutationTargetMode.Local;
+
+    /// <summary>
     /// From [ApiRoute("...")]. When set, this exact path (appended after the
     /// repository's RoutePrefix) is used instead of the id-based route heuristic.
     /// </summary>
@@ -43,6 +49,16 @@ public enum OperationOverride
     None,
     Read,
     Mutation
+}
+
+public enum MutationTargetMode
+{
+    /// <summary>Apply to the local store only (default).</summary>
+    Local,
+    /// <summary>Send to the API only; the local store is not touched. Exceptions propagate.</summary>
+    Api,
+    /// <summary>Send to the API first, then mirror to the local store. If the API call fails it is logged and the local write still happens.</summary>
+    Both
 }
 
 public enum ReadOperationMode

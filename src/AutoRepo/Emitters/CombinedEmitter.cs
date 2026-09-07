@@ -118,6 +118,9 @@ public static class CombinedEmitter
             case CombinedStrategy.LocalOnly:
                 EmitLocalOnlyBody(sb, method);
                 break;
+            case CombinedStrategy.WriteThrough:
+                EmitWriteThroughBody(sb, method);
+                break;
         }
 
         sb.AppendLine("    }");
@@ -153,7 +156,14 @@ public static class CombinedEmitter
     {
         // Explicit attribute overrides take precedence over name heuristics
         if (method.OperationOverride == Models.OperationOverride.Mutation)
-            return CombinedStrategy.LocalOnly;
+        {
+            return method.MutationTarget switch
+            {
+                Models.MutationTargetMode.Api  => CombinedStrategy.ApiOnly,
+                Models.MutationTargetMode.Both => CombinedStrategy.WriteThrough,
+                _ => CombinedStrategy.LocalOnly
+            };
+        }
 
         if (method.OperationOverride == Models.OperationOverride.Read)
         {
@@ -359,6 +369,46 @@ public static class CombinedEmitter
         }
     }
 
+    private static void EmitWriteThroughBody(StringBuilder sb, MethodModel method)
+    {
+        var callArgs = BuildCallArgs(method);
+        var returnsVoid = method.InnerReturnType == "void" ||
+                          method.ReturnType == "System.Threading.Tasks.Task" ||
+                          method.ReturnType == "Task";
+
+        sb.AppendLine($"        // Write through: API is the system of record, local is mirrored so reads see it immediately.");
+        sb.AppendLine($"        // An API failure is logged, not thrown — the local write still happens.");
+        if (returnsVoid)
+        {
+            sb.AppendLine("        try");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            await _api.{method.Name}({callArgs});");
+            sb.AppendLine("        }");
+            sb.AppendLine("        catch (Exception ex)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            _logger.LogWarning(ex, \"API write failed for {method.Name}; applying locally only\");");
+            sb.AppendLine("        }");
+            sb.AppendLine($"        await _local.{method.Name}({callArgs});");
+        }
+        else
+        {
+            sb.AppendLine($"        var apiSucceeded = false;");
+            sb.AppendLine($"        {method.InnerReturnType} apiResult = default!;");
+            sb.AppendLine("        try");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            apiResult = await _api.{method.Name}({callArgs});");
+            sb.AppendLine("            apiSucceeded = true;");
+            sb.AppendLine("        }");
+            sb.AppendLine("        catch (Exception ex)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            _logger.LogWarning(ex, \"API write failed for {method.Name}; applying locally only\");");
+            sb.AppendLine("        }");
+            sb.AppendLine($"        var localResult = await _local.{method.Name}({callArgs});");
+            sb.AppendLine("        // Prefer the server's answer (authoritative ids etc.) when it succeeded.");
+            sb.AppendLine("        return apiSucceeded ? apiResult : localResult;");
+        }
+    }
+
     private static string BuildCallArgs(MethodModel method)
     {
         return string.Join(", ", method.Parameters.Select(p => p.Name));
@@ -379,6 +429,7 @@ public static class CombinedEmitter
 
     private enum CombinedStrategy
     {
+        WriteThrough,
         MergeCollections,
         MergeSingleItem,
         ApiOnly,
