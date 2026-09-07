@@ -76,9 +76,39 @@ public interface IDiscoveryRepository
 - **Body parameters**: Complex types in POST/PUT methods
 - **Query parameters**: Primitive types that aren't route parameters
 - **Source tracking**: If entities have a `Source` property of type `DataSource`, generated wrappers set it to `Local`, `Remote`, or `Both`
-- **Fallback strategy**: Single items -> local-first; Collections -> API-first; Mutations -> local-only
-- **Combined strategy**: All reads query both sources in parallel and merge; Mutations -> local-only
+- **Fallback strategy**: Single items -> local-first; Collections -> API-first; Mutations -> local-only unless `[MutationOperation(Target = ...)]` says otherwise (see below)
+- **Combined strategy**: All reads query both sources in parallel and merge; Mutations -> local-only unless `[MutationOperation(Target = ...)]` says otherwise (see below)
 - **Local-only methods**: Methods starting with `GetStored` or `GetLibrary` stay local-only in Combined wrapper
+
+### Where mutations go
+
+By default every mutation (`Add*`/`Create*`/`Update*`/`Upsert*`/`Delete*`/`Remove*`, or anything marked `[MutationOperation]`) is applied to the **local store only** by the Fallback and Combined wrappers. That's right for client-owned data (a user's library), and wrong for server-owned per-user data (watch history, preferences) where the local copy is just a cache — a Combined client would happily "save" forever without the server ever hearing about it.
+
+Set the target per method:
+
+```csharp
+[GenerateApi(RoutePrefix = "/api/watchhistory")]
+public interface IWatchHistoryRepository
+{
+    // API first, then mirrored locally so the next Combined read already sees it.
+    // If the API call throws, it's logged as a warning and the local write still happens.
+    [MutationOperation(Target = MutationTarget.Both)]
+    Task UpsertEpisodeProgressAsync(string contentId, TimeSpan position, CancellationToken ct = default);
+
+    // API only — the local store is never touched; exceptions propagate.
+    [MutationOperation(Target = MutationTarget.Api)]
+    Task PurgeAsync(CancellationToken ct = default);
+
+    // Default (Local) — same as no attribute.
+    Task AddToLibraryAsync(int showId, CancellationToken ct = default);
+}
+```
+
+| `Target` | Fallback / Combined behaviour | Failure handling |
+|---|---|---|
+| `Local` (default) | `_local` only | n/a |
+| `Api` | `_api` only | exception propagates |
+| `Both` | `_api` then `_local`; a non-void method returns the API's result when it succeeded, else the local one | API exception → `ILogger.LogWarning`, local write still runs |
 
 ## Requirements
 
