@@ -71,6 +71,12 @@ public static class FallbackEmitter
 
         switch (strategy)
         {
+            // [ReadPreference(ApiFirst)] flips the default single-item read; an explicit
+            // [ReadOperation(Mode = ReadMode.Fallback)] still means local first.
+            case FallbackStrategy.LocalFirst when method.ReadPreference == ReadPreference.ApiFirst &&
+                                                  method.ReadMode != ReadOperationMode.Fallback:
+                EmitApiFirstSingleItemBody(sb, method);
+                break;
             case FallbackStrategy.LocalFirst:
                 EmitLocalFirstBody(sb, repo, method);
                 break;
@@ -206,6 +212,40 @@ public static class FallbackEmitter
         sb.AppendLine($"            _logger.LogWarning(ex, \"Failed to fetch {{Id}} from API\", {idLogValue});");
         sb.AppendLine("            return null;");
         sb.AppendLine("        }");
+    }
+
+    private static void EmitApiFirstSingleItemBody(StringBuilder sb, MethodModel method)
+    {
+        var callArgs = BuildCallArgs(method);
+        var idParam = method.Parameters.FirstOrDefault(p => p.IsRouteParameter);
+        var idLogValue = idParam != null ? idParam.Name : "\"(no id)\"";
+
+        sb.AppendLine($"        // [ReadPreference(ApiFirst)]: try the API first, fall back to local if it returns null or fails");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            var apiResult = await _api.{method.Name}({callArgs});");
+        sb.AppendLine($"            if (apiResult is not null)");
+        sb.AppendLine("            {");
+        if (method.HasSource)
+            sb.AppendLine($"                apiResult.Source = DataSource.Remote;");
+        sb.AppendLine($"                _logger.LogDebug(\"Found {{Id}} via API\", {idLogValue});");
+        sb.AppendLine($"                return apiResult;");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("        catch (Exception ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            _logger.LogWarning(ex, \"Failed to fetch {{Id}} from API, using local\", {idLogValue});");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine($"        var result = await _local.{method.Name}({callArgs});");
+        if (method.HasSource)
+        {
+            sb.AppendLine($"        if (result is not null)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            result.Source = DataSource.Local;");
+            sb.AppendLine("        }");
+        }
+        sb.AppendLine($"        return result;");
     }
 
     private static void EmitApiFirstBody(StringBuilder sb, RepositoryModel repo, MethodModel method)

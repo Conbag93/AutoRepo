@@ -38,6 +38,12 @@ public sealed class MethodModel
     public MutationTargetMode MutationTarget { get; set; } = MutationTargetMode.Local;
 
     /// <summary>
+    /// Which source wins when a Fallback/Combined read finds data in both. Method-level
+    /// [ReadPreference] overrides the interface-level one; default LocalFirst.
+    /// </summary>
+    public ReadPreference ReadPreference { get; set; } = ReadPreference.LocalFirst;
+
+    /// <summary>
     /// From [ApiRoute("...")]. When set, this exact path (appended after the
     /// repository's RoutePrefix) is used instead of the id-based route heuristic.
     /// </summary>
@@ -59,6 +65,14 @@ public enum MutationTargetMode
     Api,
     /// <summary>Send to the API first, then mirror to the local store. If the API call fails it is logged and the local write still happens.</summary>
     Both
+}
+
+public enum ReadPreference
+{
+    /// <summary>Local wins on conflict (default, historical behaviour).</summary>
+    LocalFirst,
+    /// <summary>API wins whenever it answers; local is the offline fallback.</summary>
+    ApiFirst
 }
 
 public enum ReadOperationMode
