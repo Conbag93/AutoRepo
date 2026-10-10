@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. See [versionize](https://github.com/versionize/versionize) for commit guidelines.
 
+<a name="0.5.1"></a>
+## [0.5.1](https://www.github.com/Conbag93/AutoRepo/releases/tag/v0.5.1) (2026-10-10)
+
 <a name="0.5.0"></a>
 ## [0.5.0](https://www.github.com/Conbag93/AutoRepo/releases/tag/v0.5.0) (2026-10-10)
 
