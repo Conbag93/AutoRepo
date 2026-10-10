@@ -112,6 +112,48 @@ public class MutationOperationAttribute : System.Attribute
 }
 
 /// <summary>
+/// Which source wins when a Combined read finds data in both the local store and the API.
+/// </summary>
+public enum ReadSource
+{
+    /// <summary>
+    /// Default. Combined single-item reads return the local row when both sources have one; Combined
+    /// collection reads merge by Id and keep the local item for duplicates. Fallback single-item reads
+    /// try local first. Right for client-owned data where the local store is the system of record.
+    /// </summary>
+    LocalFirst = 0,
+    /// <summary>
+    /// The API is authoritative whenever it answers. Combined single-item reads return the API row when it
+    /// is non-null (local only if the API returned null or failed); Combined collection reads return the API
+    /// list as-is (order preserved, no merge) and fall back to the local list only if the API call failed.
+    /// Fallback single-item reads try the API first. Use for server-owned data written with
+    /// [MutationOperation(Target = MutationTarget.Both)], where the local copy is a cache that goes stale as
+    /// soon as another device writes. The local mirror is not rewritten on read.
+    /// </summary>
+    ApiFirst = 1
+}
+
+/// <summary>
+/// Sets which source wins on conflict for the generated Fallback/Combined reads. On an interface it applies
+/// to every read; on a method it overrides the interface. Has no effect on mutations or local-only reads.
+/// </summary>
+/// <example>
+/// [GenerateApi(RoutePrefix = ""/api/watchhistory"")]
+/// [ReadPreference(ReadSource.ApiFirst)]
+/// public interface IWatchHistoryRepository { ... }
+/// </example>
+[System.AttributeUsage(System.AttributeTargets.Interface | System.AttributeTargets.Method)]
+public class ReadPreferenceAttribute : System.Attribute
+{
+    public ReadSource Source { get; }
+
+    public ReadPreferenceAttribute(ReadSource source)
+    {
+        Source = source;
+    }
+}
+
+/// <summary>
 /// Overrides the generator's name-based route inference for a single method.
 /// Required whenever a method has no id-shaped parameter for the generator to key
 /// a route segment on (e.g. sibling read endpoints distinguished by intent, not by id —
@@ -197,10 +239,12 @@ public class ApiRouteAttribute : System.Attribute
             ? interfaceSymbol.Name.Substring(1)
             : interfaceSymbol.Name;
 
+        var interfaceReadPreference = ParseReadPreference(interfaceSymbol) ?? Models.ReadPreference.LocalFirst;
+
         // Parse all methods
         var methods = interfaceSymbol.GetMembers()
             .OfType<IMethodSymbol>()
-            .Select(m => ParseMethod(m))
+            .Select(m => ParseMethod(m, interfaceReadPreference))
             .ToList();
 
         // Detect ID type from method parameters
@@ -248,7 +292,20 @@ public class ApiRouteAttribute : System.Attribute
         return $"/api/{routeName}";
     }
 
-    private static MethodModel ParseMethod(IMethodSymbol method)
+    private static Models.ReadPreference? ParseReadPreference(ISymbol symbol)
+    {
+        var attr = symbol.GetAttributes()
+            .FirstOrDefault(a => a.AttributeClass?.Name == "ReadPreferenceAttribute");
+
+        if (attr is null || attr.ConstructorArguments.Length == 0)
+            return null;
+
+        return attr.ConstructorArguments[0].Value is int v && v == 1
+            ? Models.ReadPreference.ApiFirst
+            : Models.ReadPreference.LocalFirst;
+    }
+
+    private static MethodModel ParseMethod(IMethodSymbol method, Models.ReadPreference interfaceReadPreference)
     {
         var returnType = method.ReturnType.ToDisplayString();
         var innerType = ExtractInnerType(method.ReturnType);
@@ -277,6 +334,7 @@ public class ApiRouteAttribute : System.Attribute
             OperationOverride = operationOverride,
             ReadMode = readMode,
             MutationTarget = mutationTarget,
+            ReadPreference = ParseReadPreference(method) ?? interfaceReadPreference,
             ExplicitRoute = explicitRoute
         };
     }

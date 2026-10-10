@@ -110,6 +110,34 @@ public interface IWatchHistoryRepository
 | `Api` | `_api` only | exception propagates |
 | `Both` | `_api` then `_local`; a non-void method returns the API's result when it succeeded, else the local one | API exception → `ILogger.LogWarning`, local write still runs |
 
+### Which source wins on read
+
+When a Combined read finds data in **both** the local store and the API, the default is **local wins**: a single-item read returns the local row, and a collection read merges by `Id` keeping the local item for duplicates. A Fallback single-item read tries local first. That's right for client-owned data.
+
+For server-owned data written with `[MutationOperation(Target = MutationTarget.Both)]` the local copy is a mirror that goes stale the moment another device writes, so mark the interface (or individual methods) API-first:
+
+```csharp
+[GenerateApi(RoutePrefix = "/api/watchhistory")]
+[ReadPreference(ReadSource.ApiFirst)]
+public interface IWatchHistoryRepository
+{
+    Task<WatchHistoryEntity?> GetEpisodeProgressAsync(string contentId, CancellationToken ct = default);
+
+    // A method-level attribute overrides the interface's.
+    [ReadPreference(ReadSource.LocalFirst)]
+    Task<WatchHistoryEntity?> GetLastLocalSessionAsync(string contentId, CancellationToken ct = default);
+}
+```
+
+| Read | `LocalFirst` (default) | `ApiFirst` |
+|---|---|---|
+| Combined, single item | both in parallel; local row if present, else API row | both in parallel; API row if non-null, else local row |
+| Combined, collection | both in parallel; merge by `Id`, local wins duplicates | both in parallel; **API list as-is** (order kept, no merge); local list only if the API call threw |
+| Fallback, single item | local, then API if null | API, then local if null or the API threw |
+| Fallback, collection | API, then local if the API threw (unchanged) | same |
+
+API exceptions are always logged and swallowed, so an offline client still gets its local data. The local mirror is **not** rewritten from the API row on read; it is refreshed by the next write-through. An explicit `[ReadOperation(Mode = ReadMode.Fallback)]` keeps meaning local-first, and mutations and `GetStored*`/`GetLibrary*` local-only reads are unaffected.
+
 ## Requirements
 
 - .NET SDK with Roslyn source generators support

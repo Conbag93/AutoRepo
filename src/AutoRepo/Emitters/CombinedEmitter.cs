@@ -103,8 +103,14 @@ public static class CombinedEmitter
 
         switch (strategy)
         {
+            case CombinedStrategy.MergeCollections when method.ReadPreference == ReadPreference.ApiFirst:
+                EmitApiPreferredCollectionBody(sb, method);
+                break;
             case CombinedStrategy.MergeCollections:
                 EmitMergeCollectionsBody(sb, repo, method);
+                break;
+            case CombinedStrategy.MergeSingleItem when method.ReadPreference == ReadPreference.ApiFirst:
+                EmitApiPreferredSingleItemBody(sb, method);
                 break;
             case CombinedStrategy.MergeSingleItem:
                 EmitMergeSingleItemBody(sb, repo, method);
@@ -299,6 +305,77 @@ public static class CombinedEmitter
         sb.AppendLine();
         sb.AppendLine($"        _logger.LogDebug(\"{{Id}} not found in either source\", {idLogValue});");
         sb.AppendLine($"        return null;");
+    }
+
+    private static void EmitApiPreferredSingleItemBody(StringBuilder sb, MethodModel method)
+    {
+        var callArgs = BuildCallArgs(method);
+        var idParam = method.Parameters.FirstOrDefault(p => p.IsRouteParameter);
+        var idLogValue = idParam != null ? idParam.Name : "request";
+
+        sb.AppendLine($"        // [ReadPreference(ApiFirst)]: the API is the system of record, local is an offline cache.");
+        sb.AppendLine($"        // Check both sources in parallel; the API row wins whenever it exists.");
+        sb.AppendLine($"        var localTask = _local.{method.Name}({callArgs});");
+        sb.AppendLine($"        var apiTask = SafeApiCallAsync(() => _api.{method.Name}({callArgs}));");
+        sb.AppendLine();
+        sb.AppendLine($"        var localResult = await localTask;");
+        sb.AppendLine($"        var apiResult = await apiTask;");
+        sb.AppendLine();
+        sb.AppendLine($"        if (apiResult != null)");
+        sb.AppendLine("        {");
+        if (method.HasSource)
+            sb.AppendLine($"            apiResult.Source = localResult != null ? DataSource.Both : DataSource.Remote;");
+        sb.AppendLine($"            _logger.LogDebug(\"{{Id}} found in remote (API preferred)\", {idLogValue});");
+        sb.AppendLine($"            return apiResult;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine($"        if (localResult != null)");
+        sb.AppendLine("        {");
+        if (method.HasSource)
+            sb.AppendLine($"            localResult.Source = DataSource.Local;");
+        sb.AppendLine($"            _logger.LogDebug(\"{{Id}} found in local only\", {idLogValue});");
+        sb.AppendLine($"            return localResult;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine($"        _logger.LogDebug(\"{{Id}} not found in either source\", {idLogValue});");
+        sb.AppendLine($"        return null;");
+    }
+
+    private static void EmitApiPreferredCollectionBody(StringBuilder sb, MethodModel method)
+    {
+        var callArgs = BuildCallArgs(method);
+
+        sb.AppendLine($"        // [ReadPreference(ApiFirst)]: when the API answers its list is authoritative and returned as-is");
+        sb.AppendLine($"        // (order preserved, no merge — local mirror rows may carry different ids for the same record).");
+        sb.AppendLine($"        // The local list is only used if the API call failed.");
+        sb.AppendLine($"        var localTask = _local.{method.Name}({callArgs});");
+        sb.AppendLine($"        var apiTask = SafeApiCallCollectionAsync(() => _api.{method.Name}({callArgs}));");
+        sb.AppendLine();
+        sb.AppendLine($"        var localResults = await localTask;");
+        sb.AppendLine($"        var apiResults = await apiTask;");
+        sb.AppendLine();
+        sb.AppendLine($"        if (apiResults != null)");
+        sb.AppendLine("        {");
+        if (method.HasSource)
+        {
+            sb.AppendLine($"            foreach (var item in apiResults)");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                item.Source = DataSource.Remote;");
+            sb.AppendLine("            }");
+        }
+        sb.AppendLine($"            _logger.LogDebug(\"Returning {{RemoteCount}} remote items (API preferred; {{LocalCount}} local ignored)\",");
+        sb.AppendLine($"                apiResults.Count, localResults.Count);");
+        sb.AppendLine($"            return apiResults;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        if (method.HasSource)
+        {
+            sb.AppendLine($"        foreach (var item in localResults)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            item.Source = DataSource.Local;");
+            sb.AppendLine("        }");
+        }
+        sb.AppendLine($"        return localResults;");
     }
 
     private static void EmitApiOnlyBody(StringBuilder sb, MethodModel method)
